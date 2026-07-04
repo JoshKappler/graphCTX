@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { ConfigError } from "../core/errors.js";
 import { symlinkedPathComponent } from "../core/path-safety.js";
@@ -93,7 +94,7 @@ function readWorkspaceJsonIfSafe(path: string, workspaceDir: string): unknown {
 
 function expandPath(p: string, workspaceDir: string): string {
   let out = p;
-  if (out.startsWith("~")) out = join(process.env.HOME ?? "", out.slice(1));
+  if (out.startsWith("~")) out = join(homedir(), out.slice(1));
   if (out.includes("~/.local/share/graphctx")) {
     out = out.replace(/^.*\.local\/share\/graphctx/, dataDir());
   }

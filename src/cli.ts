@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { writeAgentsCapsule } from "./adapters/boot-capsule.js";
@@ -281,7 +281,7 @@ program
   .option("--mcp", "run as MCP server (stdio JSON-RPC)")
   .option(
     "--socket <path>",
-    "(daemon mode) bind to a local Unix socket; one server, many concurrent clients",
+    "(daemon mode) bind to a local Unix socket (win32: named pipe); one server, many clients",
   )
   .option("-C, --cwd <dir>", "workspace directory", process.cwd())
   .description("run the graphCTX MCP server (stdio by default, 8 tools)")
@@ -915,7 +915,7 @@ function handleCliError(e: unknown): never {
 
 function logError(e: unknown): void {
   try {
-    const dir = join(process.env.HOME ?? "", ".local", "share", "graphctx", "logs");
+    const dir = join(homedir(), ".local", "share", "graphctx", "logs");
     mkdirSync(dir, { recursive: true });
     const line = `${isoNow()} ${e instanceof GraphCtxError ? `[${e.code}] ` : ""}${(e as Error)?.message ?? String(e)}\n`;
     writeFileSync(join(dir, "hook-errors.log"), line, { flag: "a" });

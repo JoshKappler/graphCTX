@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { NewFact } from "../../core/types.js";
 import { type ExtractContext, type Extractor, structuredFact } from "./types.js";
 
@@ -46,7 +46,7 @@ export const generatedMarkersExtractor: Extractor = {
           try {
             const head = readFileSync(full, "utf8").slice(0, 600);
             if (GENERATED_MARKERS.some((m) => head.includes(m))) {
-              generated.push(relative(ctx.workspaceDir, full));
+              generated.push(relative(ctx.workspaceDir, full).split(sep).join("/"));
             }
           } catch {
             // skip unreadable

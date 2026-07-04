@@ -11,6 +11,7 @@ import { EdgesRepo } from "../../store/edges.repo.js";
 import { EpisodesRepo } from "../../store/episodes.repo.js";
 import { FactsRepo } from "../../store/facts.repo.js";
 import { PromotionsRepo } from "../../store/promotions.repo.js";
+import { tsxEntry } from "../dev-tools.js";
 
 export interface ProvenanceWhyReport {
   checks: number;
@@ -31,12 +32,7 @@ interface CliResult {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
 const fixtureRepo = join(repoRoot, "fixtures", "repo-pnpm-web");
 const clock = fixedClock("2026-01-01T00:00:00.000Z");
 
@@ -253,7 +249,7 @@ function fact(over: Partial<NewFact>): NewFact {
 
 function cli(args: string[], input?: string): CliResult {
   try {
-    const stdout = execFileSync(tsxBin, [cliPath, ...args], {
+    const stdout = execFileSync(process.execPath, [tsxEntryPath, cliPath, ...args], {
       cwd: repoRoot,
       env: { ...process.env, GRAPHCTX_USER_ID: "provenance-eval" },
       input,

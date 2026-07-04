@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { handleHook } from "../../adapters/claude-code/hooks.js";
 import { nullProvider, resolveProvider } from "../../llm/provider.js";
 import { Runtime } from "../../runtime.js";
+import { tsxEntry } from "../dev-tools.js";
 
 export interface ResilienceFailsoftReport {
   checks: number;
@@ -33,12 +34,7 @@ interface CliResult {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
 const fixtureRepo = join(repoRoot, "fixtures", "repo-pnpm-web");
 
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -556,7 +552,7 @@ async function evaluateProviderFailsoft(): Promise<{
 
 function cli(args: string[], input?: string, env: NodeJS.ProcessEnv = process.env): CliResult {
   try {
-    const stdout = execFileSync(tsxBin, [cliPath, ...args], {
+    const stdout = execFileSync(process.execPath, [tsxEntryPath, cliPath, ...args], {
       cwd: repoRoot,
       env,
       input,

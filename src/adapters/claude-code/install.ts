@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { AdapterError } from "../../core/errors.js";
 import type { InstallOptions } from "../adapter.js";
@@ -25,9 +26,7 @@ interface ClaudeSettings {
 // event payload on stdin. Idempotent: replaces any prior graphctx entries.
 export function installClaudeHooks(opts: InstallOptions): { settingsPath: string } {
   const bin = opts.binPath ?? "graphctx";
-  const dir = opts.global
-    ? join(process.env.HOME ?? "", ".claude")
-    : join(opts.workspaceDir, ".claude");
+  const dir = opts.global ? join(homedir(), ".claude") : join(opts.workspaceDir, ".claude");
   mkdirSync(dir, { recursive: true });
   const settingsPath = join(dir, "settings.json");
   assertWritableConfigPath(settingsPath, "Claude settings.json file");
@@ -58,9 +57,7 @@ export function installClaudeHooks(opts: InstallOptions): { settingsPath: string
 }
 
 export function uninstallClaudeHooks(opts: InstallOptions): void {
-  const dir = opts.global
-    ? join(process.env.HOME ?? "", ".claude")
-    : join(opts.workspaceDir, ".claude");
+  const dir = opts.global ? join(homedir(), ".claude") : join(opts.workspaceDir, ".claude");
   const settingsPath = join(dir, "settings.json");
   if (!existsSync(settingsPath)) return;
   assertWritableConfigPath(settingsPath, "Claude settings.json file");
@@ -84,9 +81,7 @@ export function uninstallClaudeHooks(opts: InstallOptions): void {
 }
 
 export function hasClaudeGraphctxHooks(opts: InstallOptions): boolean {
-  const dir = opts.global
-    ? join(process.env.HOME ?? "", ".claude")
-    : join(opts.workspaceDir, ".claude");
+  const dir = opts.global ? join(homedir(), ".claude") : join(opts.workspaceDir, ".claude");
   const settingsPath = join(dir, "settings.json");
   if (!existsSync(settingsPath)) return false;
   if (isSymlink(settingsPath)) return false;
