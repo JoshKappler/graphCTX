@@ -165,10 +165,12 @@ export class TuiApp {
           this.refresh("refused secret-bearing memory");
           return;
         }
-        void this.rt.rememberFact({ text: v }).then((f) => {
-          this.refresh(`remembered ${f.fact_id.slice(-8)}`);
-          this.draw();
-        });
+        void this.rt
+          .rememberFact({ text: v, baseSeenFactId: this.rt.currentFactIdFor() })
+          .then((f) => {
+            this.refresh(`remembered ${f.fact_id.slice(-8)}`);
+            this.draw();
+          });
       });
     } else if (k.name === "o") {
       this.ask("New open loop", (v) => {

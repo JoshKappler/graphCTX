@@ -83,7 +83,7 @@ describe("Runtime forget", () => {
 });
 
 describe("Runtime remember", () => {
-  it("anchors explicit memory and invalidates older same-key facts", async () => {
+  it("anchors explicit memory and invalidates older same-key facts the writer saw", async () => {
     const dir = mkdtempSync(join(tmpdir(), "graphctx-runtime-remember-"));
     try {
       execFileSync("git", ["-c", "init.defaultBranch=main", "init", "-q", "."], {
@@ -109,11 +109,15 @@ describe("Runtime remember", () => {
           predicate: "test_command",
           kind: "procedural",
         });
+        // The updating writer saw the value it replaces (SPEC §14 optimistic
+        // concurrency) — without baseSeenFactId an equal-precedence
+        // contradiction is disputed instead of superseded.
         const second = await rt.rememberFact({
           text: "test with pnpm test",
           subject: "repo",
           predicate: "test_command",
           kind: "procedural",
+          baseSeenFactId: first.fact_id,
         });
 
         const older = rt.facts.get(first.fact_id);

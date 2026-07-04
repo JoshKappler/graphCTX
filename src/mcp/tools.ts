@@ -25,6 +25,10 @@ const rememberInput = z.object({
   subject: z.string().default("user"),
   predicate: z.string().default("note"),
   session_id: z.string().optional(),
+  // fact_id last seen for this subject/predicate (from recall/why). With it a
+  // contradicting value supersedes cleanly; without it, an equal-precedence
+  // contradiction is disputed and surfaced (SPEC §14, never silent LWW).
+  base_seen_fact_id: z.string().optional(),
 });
 
 const recallInput = z.object({
@@ -84,7 +88,14 @@ export const MCP_TOOLS: McpTool[] = [
     name: "remember",
     description: "Store a user-asserted fact/event/procedure in graphCTX memory.",
     inputSchema: s(
-      { text: nonEmptyStr, kind: factKindSchema, subject: str, predicate: str, session_id: str },
+      {
+        text: nonEmptyStr,
+        kind: factKindSchema,
+        subject: str,
+        predicate: str,
+        session_id: str,
+        base_seen_fact_id: str,
+      },
       ["text"],
     ),
     outputSchema: s({ fact_id: str, status: str }, ["fact_id", "status"]),
@@ -103,6 +114,7 @@ export const MCP_TOOLS: McpTool[] = [
         predicate: a.predicate,
         kind: a.kind,
         sessionId: a.session_id,
+        baseSeenFactId: a.base_seen_fact_id,
         tags: ["mcp_remember"],
       });
       refreshAgentsCapsule(rt);

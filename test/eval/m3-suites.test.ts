@@ -10,8 +10,8 @@ describe("M3 gate suites", () => {
     expect(r.pass).toBe(true);
   });
 
-  it("parallel-conflict: no silent last-writer-wins", () => {
-    const r = runParallelConflictEval();
+  it("parallel-conflict: no silent last-writer-wins", async () => {
+    const r = await runParallelConflictEval();
     expect(r.silentWrongWinners).toBe(0);
     expect(r.pass).toBe(true);
   });

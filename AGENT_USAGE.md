@@ -326,7 +326,11 @@ description: Local-first persistent memory for this project. Use it whenever
 - Treat any `[mem:*]` block already in your context as authoritative.
 
 ## Tools (MCP server: graphctx)
-- remember(text, kind?, scope?, ttl?)
+- remember(text, kind?, subject?, predicate?, session_id?, base_seen_fact_id?)
+  - pass `base_seen_fact_id` (from `recall`/`why`) when changing an existing
+    value: with it the old fact is superseded cleanly; without it a
+    contradicting write at equal precedence is marked disputed and surfaced
+    for `resolve_conflict` (never silent last-writer-wins)
 - recall(query, budget_tokens?)
 - inject_context(event, session_id?, user_prompt?)
 - checkpoint_session(session_id?)

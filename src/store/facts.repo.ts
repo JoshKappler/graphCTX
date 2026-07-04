@@ -10,7 +10,7 @@ import type {
   ScoredFact,
 } from "../core/types.js";
 import { redactSecrets, sensitivityForText } from "../security/secrets.js";
-import { type DB, tx } from "./db.js";
+import { type DB, tx, txImmediate } from "./db.js";
 
 interface FactRow {
   fact_id: string;
@@ -168,6 +168,13 @@ export class FactsRepo {
 
   transaction<T>(fn: () => T): T {
     return tx(this.db, fn);
+  }
+
+  // For read-modify-write transactions (sweep/apply): writer lock at BEGIN,
+  // so concurrent processes serialize instead of failing mid-transaction with
+  // SQLITE_BUSY_SNAPSHOT (see txImmediate).
+  transactionImmediate<T>(fn: () => T): T {
+    return txImmediate(this.db, fn);
   }
 
   // I1: defaults to candidate / session_only unless explicitly overridden.

@@ -50,11 +50,19 @@ export class Probation {
     workspace_id?: string;
     session_id?: string;
   }): SweepResult {
-    return this.deps.facts.transaction(() => this.sweepSessionToWorkspaceInTransaction(scope));
+    // BEGIN IMMEDIATE: two overlapping sweeps (SessionEnd hook vs the MCP
+    // daemon's checkpoint/promote) on one WAL DB must serialize at BEGIN. A
+    // deferred tx reads first, and its later writes die with
+    // SQLITE_BUSY_SNAPSHOT once the other sweep commits — the hook swallows
+    // that (I9) and the ended session's promotions are lost permanently,
+    // since no later sweep revisits that session's candidates.
+    return this.deps.facts.transactionImmediate(() =>
+      this.sweepSessionToWorkspaceInTransaction(scope),
+    );
   }
 
   reviewFactForWorkspace(factId: string): PromotionReview | null {
-    return this.deps.facts.transaction(() => {
+    return this.deps.facts.transactionImmediate(() => {
       const fact = this.deps.facts.get(factId);
       if (!fact) return null;
       if (

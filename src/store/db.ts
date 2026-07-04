@@ -23,8 +23,22 @@ export function openDb(path: string): DB {
   }
 }
 
-// Transaction helper.
+// Transaction helper (BEGIN deferred).
 export function tx<T>(db: DB, fn: () => T): T {
   const wrapped = db.transaction(fn);
   return wrapped() as T;
+}
+
+// Read-modify-write transaction helper. BEGIN IMMEDIATE takes the writer lock
+// up front, so concurrent read-modify-write transactions serialize at BEGIN
+// (waiting via busy_timeout) instead of snapshotting on their first read and
+// dying mid-transaction with SQLITE_BUSY_SNAPSHOT when another writer commits
+// first — busy_timeout does NOT retry snapshot conflicts.
+export function txImmediate<T>(db: DB, fn: () => T): T {
+  const wrapped = db.transaction(fn) as ((...args: unknown[]) => unknown) & {
+    immediate?: (...args: unknown[]) => unknown;
+  };
+  // Both drivers (better-sqlite3 and bun:sqlite) expose .immediate on the
+  // wrapped transaction function.
+  return (wrapped.immediate ? wrapped.immediate() : wrapped()) as T;
 }

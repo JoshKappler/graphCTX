@@ -1,4 +1,6 @@
 import type { Fact } from "../core/types.js";
+import { reconcileWrite } from "../resolve/conflicts.js";
+import { precedenceRank } from "../resolve/precedence.js";
 import type { EdgesRepo } from "../store/edges.repo.js";
 import type { EpisodesRepo } from "../store/episodes.repo.js";
 import type { FactsRepo } from "../store/facts.repo.js";
@@ -38,7 +40,10 @@ export class Invalidator {
     this.llm = deps.llm ?? nullLlmAgent;
   }
 
-  async processIncomingFact(incoming: Fact): Promise<InvalidationResult> {
+  async processIncomingFact(
+    incoming: Fact,
+    opts: { baseSeenFactId?: string } = {},
+  ): Promise<InvalidationResult> {
     const actions: InvalidationAction[] = [];
     const ctx: RelationContext = {
       workspaceDir: this.deps.workspaceDir,
@@ -52,6 +57,32 @@ export class Invalidator {
       if (existing.status === "expired" || existing.status === "superseded") continue;
 
       let verdict = classifyRelation(incoming, existing, ctx);
+
+      // `refines` supersedes silently, which is only safe when the writer
+      // outranks the existing fact or provably saw the value it replaces. Two
+      // user-asserted facts at the same precedence (the shape two parallel
+      // sessions' default remembers produce at workspace scope) go through
+      // reconcileWrite (SPEC §14): without a matching base_seen_fact_id the
+      // contradiction is disputed and surfaced, never a silent
+      // last-writer-wins. Deterministic parser facts are exempt — their
+      // evidence is anchored to the current commit, so a changed value IS the
+      // newer world state (re-extraction refresh).
+      if (
+        verdict.relation === "refines" &&
+        incoming.source.asserted_by === "user" &&
+        existing.source.asserted_by === "user" &&
+        precedenceRank(incoming, incoming.scope.session_id) ===
+          precedenceRank(existing, incoming.scope.session_id)
+      ) {
+        const outcome = reconcileWrite(
+          { base_seen_fact_id: opts.baseSeenFactId, fact: incoming },
+          existing,
+          () => false, // no ancestor proof on this path; unused for equal-trust pairs
+        );
+        if (outcome.kind === "disputed") {
+          verdict = { relation: "conflicts", reason: outcome.reason, deterministic: true };
+        }
+      }
 
       // LLM fallback ONLY when deterministic rules abstain.
       if (!verdict.deterministic && verdict.relation === "unrelated") {
@@ -100,7 +131,11 @@ export class Invalidator {
   }
 
   private apply(incoming: Fact, existing: Fact, relation: Relation): string | null {
-    return this.deps.facts.transaction(() => this.applyInTransaction(incoming, existing, relation));
+    // BEGIN IMMEDIATE: apply is read-modify-write on facts+edges; see
+    // FactsRepo.transactionImmediate for why deferred is unsafe here.
+    return this.deps.facts.transactionImmediate(() =>
+      this.applyInTransaction(incoming, existing, relation),
+    );
   }
 
   private applyInTransaction(incoming: Fact, existing: Fact, relation: Relation): string | null {

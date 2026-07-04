@@ -207,6 +207,9 @@ program
       subject: opts.subject,
       predicate: opts.predicate,
       kind,
+      // Interactive read-then-write: the CLI resolves the current value at
+      // write time, so a deliberate update supersedes instead of disputing.
+      baseSeenFactId: rt.currentFactIdFor(opts.subject, opts.predicate),
     });
     refreshAgentsCapsule(rt);
     process.stdout.write(`Remembered ${fact.fact_id}: ${renderCard(fact).markdown}\n`);
@@ -621,7 +624,7 @@ program
       const { runParallelConflictEval, formatParallelConflictReport } = await import(
         "./eval/suites/parallel-conflict.js"
       );
-      const r = runParallelConflictEval();
+      const r = await runParallelConflictEval();
       process.stdout.write(formatParallelConflictReport(r));
       return r.pass;
     };

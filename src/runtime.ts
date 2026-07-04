@@ -48,6 +48,11 @@ export interface RememberFactInput {
   kind?: FactKind;
   sessionId?: string;
   tags?: string[];
+  // Optimistic-concurrency base (SPEC §14): the fact_id the writer last saw
+  // for this subject/predicate (from recall/why). With it, a contradicting
+  // value supersedes cleanly; without it, an equal-precedence contradiction
+  // is disputed and surfaced instead of silently superseding.
+  baseSeenFactId?: string;
 }
 
 // Central wiring: opens stores, git, repos, planner. Used by CLI + adapters +
@@ -262,11 +267,14 @@ export class Runtime {
   // Insert a fact AND run invalidation against existing memory (M1). Returns the
   // inserted fact; invalidation effects (supersede/expire/dispute) are applied
   // as a side effect and never throw out to the caller (I9).
-  async learn(input: Parameters<FactsRepo["insert"]>[0]): Promise<ReturnType<FactsRepo["insert"]>> {
+  async learn(
+    input: Parameters<FactsRepo["insert"]>[0],
+    opts: { baseSeenFactId?: string } = {},
+  ): Promise<ReturnType<FactsRepo["insert"]>> {
     const fact = this.facts.insert(input);
     try {
       const inv = await this.invalidator();
-      await inv.processIncomingFact(fact);
+      await inv.processIncomingFact(fact, opts);
     } catch {
       // invalidation must never break a write (I9)
     }
@@ -341,6 +349,26 @@ export class Runtime {
     });
   }
 
+  // The active fact a new explicit remember for (subject,predicate) would
+  // collide with at the same scope level. Interactive writers (CLI, TUI) read
+  // this at write time and pass it as baseSeenFactId — the read-then-write
+  // reconcileWrite's optimistic concurrency expects, so a deliberate update
+  // supersedes cleanly. Agents calling MCP remember pass the fact_id they
+  // actually retrieved (recall/why) instead; without one, an
+  // equal-precedence contradiction is disputed, never silently superseded.
+  currentFactIdFor(subject = "repo", predicate = "note", sessionId?: string): string | undefined {
+    const current = this.facts
+      .bySubjectPredicate(subject, predicate, { user_id: this.userId })
+      .filter((f) => f.status === "active")
+      .filter((f) =>
+        sessionId
+          ? f.scope.session_id === sessionId
+          : !f.scope.session_id && f.scope.workspace_id === this.workspaceId,
+      )
+      .sort((a, b) => a.time.t_recorded.localeCompare(b.time.t_recorded));
+    return current.at(-1)?.fact_id;
+  }
+
   // Store explicit user memory with the same lifecycle as CLI/MCP/TUI remember:
   // safe intake, current git anchoring, active trust, and invalidation.
   async rememberFact(input: RememberFactInput): Promise<Fact> {
@@ -354,20 +382,23 @@ export class Runtime {
       kind,
       session_id: input.sessionId,
     });
-    return await this.learn({
-      subject,
-      predicate,
-      object: input.text,
-      fact_kind: kind,
-      temporal_kind: kind === "task_state" || kind === "open_loop" ? "dynamic" : "static",
-      scope: this.scope(input.sessionId),
-      trust_tier: "high",
-      status: "active",
-      promotion_state: input.sessionId ? "session_only" : "workspace_active",
-      source: { asserted_by: "user", event_ids: [], raw_quote: `user said: ${input.text}` },
-      git: await this.currentGitAnchor(),
-      tags: input.tags ?? ["user_explicit"],
-    });
+    return await this.learn(
+      {
+        subject,
+        predicate,
+        object: input.text,
+        fact_kind: kind,
+        temporal_kind: kind === "task_state" || kind === "open_loop" ? "dynamic" : "static",
+        scope: this.scope(input.sessionId),
+        trust_tier: "high",
+        status: "active",
+        promotion_state: input.sessionId ? "session_only" : "workspace_active",
+        source: { asserted_by: "user", event_ids: [], raw_quote: `user said: ${input.text}` },
+        git: await this.currentGitAnchor(),
+        tags: input.tags ?? ["user_explicit"],
+      },
+      { baseSeenFactId: input.baseSeenFactId },
+    );
   }
 
   // Resolve an open loop so it stops resurfacing (M1 §7).

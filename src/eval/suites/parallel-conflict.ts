@@ -28,7 +28,8 @@ import { Runtime } from "../../runtime.js";
 //      and the adversarial edges (high-vs-high, non-ancestor base, one-sided
 //      branch, base_seen idempotency).
 //   5. Real Runtime concurrent stress — two durable writers over the same store
-//      race stale-base writes; outcomes preserve/audit both sides.
+//      race through the REAL learn() path: contradictions dispute unless the
+//      writer provably saw the value it replaces; outcomes audit both sides.
 //   6. Headline metric — silentWrongWinners MUST be 0: an ambiguous contradiction
 //      resolving to `apply` is a silent LWW = catastrophic.
 
@@ -606,59 +607,58 @@ function runReconcile(detail: string[]): { section: SectionResult; silentWrongWi
 }
 
 // ---- section 5: real Runtime concurrent-session stress ----------------------
+//
+// Drives the REAL write path (Runtime.learn → classifyRelation, which routes
+// equal-precedence user contradictions through reconcileWrite) — not
+// reconcileWrite called directly — so the no-silent-LWW guarantee is proven
+// where production actually writes.
 
 interface DurableWriterSpec {
-  sessionId: string;
   object: string;
-  branch: string;
+  branch?: string;
   trustTier?: Fact["trust_tier"];
   assertedBy?: Fact["source"]["asserted_by"];
-  baseGitHead?: string;
-  validFromCommit?: string;
 }
 
 interface ConcurrentCase {
   label: string;
   first: DurableWriterSpec;
   second: DurableWriterSpec;
-  expectSecond: ConcurrencyOutcome["kind"];
+  // The second writer read the first writer's fact before writing (optimistic
+  // concurrency base, SPEC §14) — the only clean supersede at equal rank.
+  secondSawFirst?: boolean;
+  expectSecond: "disputed" | "partition" | "supersede";
 }
 
 const CONCURRENT_CASES: ConcurrentCase[] = [
   {
-    label: "same-branch stale writers dispute",
-    first: { sessionId: "race-a", object: "pnpm", branch: "main", trustTier: "low" },
-    second: { sessionId: "race-b", object: "yarn", branch: "main", trustTier: "low" },
+    label: "parallel default remembers (neither saw the other) dispute",
+    first: { object: "pnpm" },
+    second: { object: "yarn" },
     expectSecond: "disputed",
   },
   {
-    label: "branch-disjoint stale writers partition",
-    first: { sessionId: "race-a", object: "pnpm", branch: "main", trustTier: "low" },
-    second: { sessionId: "race-b", object: "yarn", branch: "feat", trustTier: "low" },
+    label: "branch-disjoint writers partition",
+    first: { object: "pnpm", branch: "main" },
+    second: { object: "yarn", branch: "feat" },
     expectSecond: "partition",
   },
   {
-    label: "structured stale writer invalidates lower-trust current",
-    first: {
-      sessionId: "race-a",
-      object: "npm",
-      branch: "main",
-      trustTier: "low",
-      validFromCommit: "c0",
-    },
-    second: {
-      sessionId: "race-b",
-      object: "pnpm",
-      branch: "main",
-      trustTier: "high",
-      assertedBy: "deterministic_parser",
-      baseGitHead: "c1",
-    },
-    expectSecond: "invalidate",
+    label: "an update that saw the current value supersedes cleanly",
+    first: { object: "pnpm" },
+    second: { object: "yarn" },
+    secondSawFirst: true,
+    expectSecond: "supersede",
+  },
+  {
+    label: "structured evidence supersedes lower-trust prose",
+    first: { object: "npm", trustTier: "low", assertedBy: "deterministic_parser" },
+    second: { object: "pnpm", trustTier: "high", assertedBy: "deterministic_parser" },
+    expectSecond: "supersede",
   },
 ];
 
-function runConcurrentStress(detail: string[]): ConcurrentStressResult {
+async function runConcurrentStress(detail: string[]): Promise<ConcurrentStressResult> {
   let cases = 0;
   let passed = 0;
   let silentOverwrites = 0;
@@ -666,65 +666,40 @@ function runConcurrentStress(detail: string[]): ConcurrentStressResult {
 
   for (const c of CONCURRENT_CASES) {
     cases += 1;
-    const result = runConcurrentCase(c);
-    outcomes[result.secondOutcome] = (outcomes[result.secondOutcome] ?? 0) + 1;
+    const result = await runConcurrentCase(c);
+    outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
     if (result.silentOverwrite) silentOverwrites += 1;
     const ok =
-      result.firstOutcome === "apply" &&
-      result.secondOutcome === c.expectSecond &&
-      !result.silentOverwrite &&
-      result.loserAuditable;
+      result.outcome === c.expectSecond && !result.silentOverwrite && result.loserAuditable;
     if (ok) passed += 1;
     detail.push(
-      `  ${ok ? "✓" : "✗"} concurrent writers: ${c.label} → first=${result.firstOutcome} second=${result.secondOutcome} silentOverwrite=${result.silentOverwrite} loserAuditable=${result.loserAuditable}`,
+      `  ${ok ? "✓" : "✗"} concurrent writers: ${c.label} → outcome=${result.outcome} silentOverwrite=${result.silentOverwrite} loserAuditable=${result.loserAuditable}`,
     );
   }
 
   detail.push(
-    `  ${silentOverwrites === 0 ? "✓" : "✗"} concurrent writers: ${silentOverwrites} silent overwrites across ${cases} real Runtime races`,
+    `  ${silentOverwrites === 0 ? "✓" : "✗"} concurrent writers: ${silentOverwrites} silent overwrites across ${cases} real learn() races`,
   );
   return { cases, passed, silentOverwrites, outcomes };
 }
 
-function runConcurrentCase(c: ConcurrentCase): {
-  firstOutcome: ConcurrencyOutcome["kind"];
-  secondOutcome: ConcurrencyOutcome["kind"];
+async function runConcurrentCase(c: ConcurrentCase): Promise<{
+  outcome: string;
   silentOverwrite: boolean;
   loserAuditable: boolean;
-} {
+}> {
   const dir = mkdtempSync(join(tmpdir(), "graphctx-conflict-"));
-  const seed = new Runtime({ workspaceDir: dir, userId: "conflict-eval" });
   const writerA = new Runtime({ workspaceDir: dir, userId: "conflict-eval" });
   const writerB = new Runtime({ workspaceDir: dir, userId: "conflict-eval" });
   const inspector = new Runtime({ workspaceDir: dir, userId: "conflict-eval" });
   try {
-    const base = insertRuntimeFact(seed, {
-      sessionId: "race-base",
-      object: "base",
-      branch: "main",
-      trustTier: "low",
-      validFromCommit: "c0",
-    });
-    const first = applyDurableWrite(writerA, {
-      spec: c.first,
-      baseSeenFactId: base.fact_id,
-      current: base,
-    });
-    const currentForSecond = currentDurableFact(writerB) ?? first.fact;
-    const second = applyDurableWrite(writerB, {
-      spec: c.second,
-      baseSeenFactId: base.fact_id,
-      current: currentForSecond,
-    });
-    const audit = auditConcurrentResult(inspector, currentForSecond, second.fact, second.outcome);
-    return {
-      firstOutcome: first.outcome.kind,
-      secondOutcome: second.outcome.kind,
-      silentOverwrite: audit.silentOverwrite,
-      loserAuditable: audit.loserAuditable,
-    };
+    const first = await writerA.learn(durableWrite(writerA, c.first));
+    const second = await writerB.learn(
+      durableWrite(writerB, c.second),
+      c.secondSawFirst ? { baseSeenFactId: first.fact_id } : {},
+    );
+    return auditConcurrentResult(inspector, first.fact_id, second.fact_id, c);
   } finally {
-    seed.close();
     writerA.close();
     writerB.close();
     inspector.close();
@@ -732,139 +707,49 @@ function runConcurrentCase(c: ConcurrentCase): {
   }
 }
 
-function applyDurableWrite(
-  rt: Runtime,
-  opts: { spec: DurableWriterSpec; baseSeenFactId: string; current: Fact | null },
-): { fact: Fact; outcome: ConcurrencyOutcome } {
-  const intentFact = runtimeIntentFact(rt, opts.spec);
-  const outcome = reconcileWrite(
-    {
-      base_seen_fact_id: opts.baseSeenFactId,
-      base_git_head: opts.spec.baseGitHead,
-      branch: opts.spec.branch,
-      fact: intentFact,
-    },
-    opts.current,
-    isAncestor,
-  );
-  const inserted = insertRuntimeFact(
-    rt,
-    opts.spec,
-    outcome.kind === "disputed" ? "disputed" : "active",
-  );
-  applyDurableOutcome(rt, inserted, opts.current, outcome);
-  return { fact: rt.facts.get(inserted.fact_id) ?? inserted, outcome };
-}
-
-function insertRuntimeFact(
-  rt: Runtime,
-  spec: DurableWriterSpec,
-  status: Fact["status"] = "active",
-): Fact {
-  return rt.facts.insert({
+function durableWrite(rt: Runtime, spec: DurableWriterSpec): Parameters<Runtime["learn"]>[0] {
+  return {
     subject: "repo",
     predicate: "package_manager",
     object: spec.object,
     fact_kind: "constraint",
     temporal_kind: "static",
-    scope: rt.scope(spec.sessionId),
-    trust_tier: spec.trustTier ?? "low",
-    status,
-    promotion_state: "workspace_active",
-    source: { asserted_by: spec.assertedBy ?? "user", event_ids: [] },
-    git: { branch: spec.branch, valid_from_commit: spec.validFromCommit },
-  });
-}
-
-function runtimeIntentFact(rt: Runtime, spec: DurableWriterSpec): Fact {
-  return fact({
-    subject: "repo",
-    predicate: "package_manager",
-    object: spec.object,
-    scope: rt.scope(spec.sessionId),
+    scope: rt.scope(),
+    trust_tier: spec.trustTier ?? "high",
     status: "active",
     promotion_state: "workspace_active",
-    trust_tier: spec.trustTier ?? "low",
     source: { asserted_by: spec.assertedBy ?? "user", event_ids: [] },
-    git: { branch: spec.branch, valid_from_commit: spec.validFromCommit },
-  });
-}
-
-function applyDurableOutcome(
-  rt: Runtime,
-  inserted: Fact,
-  current: Fact | null,
-  outcome: ConcurrencyOutcome,
-): void {
-  if (!current) return;
-  switch (outcome.kind) {
-    case "apply": {
-      if (objStr(inserted) !== objStr(current)) {
-        rt.edges.add(inserted.fact_id, "SUPERSEDES", current.fact_id, inserted.fact_id);
-        rt.edges.add(current.fact_id, "SUPERSEDED_BY", inserted.fact_id, inserted.fact_id);
-        rt.facts.update(current.fact_id, {
-          status: "superseded",
-          invalidated_by: inserted.fact_id,
-        });
-      }
-      return;
-    }
-    case "partition":
-      return;
-    case "invalidate": {
-      rt.edges.add(inserted.fact_id, "INVALIDATES", current.fact_id, inserted.fact_id);
-      rt.facts.expire(current.fact_id, inserted.fact_id, "c1");
-      return;
-    }
-    case "disputed": {
-      rt.edges.add(inserted.fact_id, "CONFLICTS_WITH", current.fact_id, inserted.fact_id);
-      rt.facts.update(current.fact_id, {
-        status: "disputed",
-        contradiction_count: current.contradiction_count + 1,
-      });
-      return;
-    }
-  }
-}
-
-function currentDurableFact(rt: Runtime): Fact | null {
-  const active = rt.facts
-    .bySubjectPredicate("repo", "package_manager", { user_id: rt.userId })
-    .filter((f) => f.status === "active" && f.promotion_state === "workspace_active");
-  active.sort((a, b) => {
-    const byTime = a.time.t_recorded.localeCompare(b.time.t_recorded);
-    if (byTime !== 0) return byTime;
-    return a.fact_id.localeCompare(b.fact_id);
-  });
-  return active.at(-1) ?? null;
+    git: spec.branch ? { branch: spec.branch } : undefined,
+  };
 }
 
 function auditConcurrentResult(
   rt: Runtime,
-  current: Fact,
-  incoming: Fact,
-  outcome: ConcurrencyOutcome,
-): { silentOverwrite: boolean; loserAuditable: boolean } {
-  const currentAfter = rt.facts.get(current.fact_id);
-  const incomingAfter = rt.facts.get(incoming.fact_id);
-  const bothPersisted = currentAfter !== null && incomingAfter !== null;
-  const edgeCount =
-    rt.edges.touching(current.fact_id).length + rt.edges.touching(incoming.fact_id).length;
-  const loserAuditable =
-    bothPersisted &&
-    (outcome.kind === "partition" ||
-      currentAfter.status === "expired" ||
-      currentAfter.status === "superseded" ||
-      currentAfter.status === "disputed" ||
-      incomingAfter.status === "disputed" ||
-      edgeCount > 0);
-  const silentOverwrite = outcome.kind === "apply" || !bothPersisted || !loserAuditable;
-  return { silentOverwrite, loserAuditable };
+  firstId: string,
+  secondId: string,
+  c: ConcurrentCase,
+): { outcome: string; silentOverwrite: boolean; loserAuditable: boolean } {
+  const first = rt.facts.get(firstId);
+  const second = rt.facts.get(secondId);
+  const bothPersisted = first != null && second != null;
+  const edgeKinds = [...rt.edges.touching(firstId), ...rt.edges.touching(secondId)].map(
+    (e) => e.edge_kind,
+  );
+
+  let outcome = "none";
+  if (first?.status === "disputed" && second?.status === "disputed") outcome = "disputed";
+  else if (first?.status === "superseded" || first?.status === "expired") outcome = "supersede";
+  else if (first?.status === "active" && second?.status === "active") outcome = "partition";
+
+  const loserAuditable = bothPersisted && (outcome === "partition" || edgeKinds.length > 0);
+  const silentOverwrite =
+    !bothPersisted || !loserAuditable || (outcome === "supersede" && c.expectSecond === "disputed");
+  return { outcome, silentOverwrite, loserAuditable };
 }
 
 // ---- top-level runner -------------------------------------------------------
 
-export function runParallelConflictEval(): ParallelConflictReport {
+export async function runParallelConflictEval(): Promise<ParallelConflictReport> {
   const detail: string[] = [];
 
   detail.push("[1] precedence ladder (cross-product of all 9 ranks)");
@@ -883,8 +768,8 @@ export function runParallelConflictEval(): ParallelConflictReport {
   const { section: reconcile, silentWrongWinners } = runReconcile(detail);
 
   detail.push("");
-  detail.push("[5] real Runtime concurrent-session stress");
-  const concurrent = runConcurrentStress(detail);
+  detail.push("[5] real Runtime concurrent-session stress (live learn() path)");
+  const concurrent = await runConcurrentStress(detail);
 
   const determinismCases = 2; // stable total order + equal-rank tiebreak
   const determinismPassed =
