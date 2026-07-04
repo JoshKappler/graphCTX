@@ -82,16 +82,52 @@ interface BlockSpan {
   end: number;
 }
 
-function findMcpServerBlock(text: string, name: string): BlockSpan | null {
-  const headerRe = new RegExp(`^\\[mcp_servers\\.${escapeRegex(name)}\\]\\s*$`, "m");
-  const m = headerRe.exec(text);
-  if (!m) return null;
-  const start = m.index;
-  // Block ends at the next top-level `[...]` header or end-of-file.
-  const after = text.slice(start + m[0].length);
-  const nextHeader = /^\[[^\]]+\]\s*$/m.exec(after);
-  const blockLen = nextHeader ? m[0].length + nextHeader.index : text.length - start;
-  return { start, end: start + blockLen };
+// Recognizes a TOML table (`[key]`) or array-of-tables (`[[key]]`) header
+// line, tolerating leading whitespace, an inline trailing comment, and CRLF.
+// Returns the dotted key with whitespace around dots trimmed, or null when the
+// line is not a header. Quoted key segments containing `]` or `#` are outside
+// this grammar (we never write them; unrecognized lines stay untouched).
+function tableHeaderKey(line: string): string | null {
+  const m = /^\s*(\[\[|\[)([^\]]+)(\]\]|\])\s*(?:#.*)?$/.exec(line.replace(/\r$/, ""));
+  const key = m?.[2];
+  if (!m || key === undefined) return null;
+  if ((m[1] === "[[") !== (m[3] === "]]")) return null;
+  return key
+    .split(".")
+    .map((part) => part.trim())
+    .join(".");
+}
+
+// Finds the span of the `[mcp_servers.<name>]` table via a line scan (a bare
+// next-header regex misses commented headers and `[[array]]` tables, which
+// made the block swallow whatever followed it). `withSubtables` extends the
+// span across `[mcp_servers.<name>.*]` subtables: uninstall removes them so
+// no orphaned subtable re-creates the server table; upsert leaves them alone
+// so a user's env subtable survives updates. The span ends before trailing
+// blank/comment-only lines so a comment attached to the next table survives.
+function findMcpServerBlock(text: string, name: string, withSubtables = false): BlockSpan | null {
+  const owned = `mcp_servers.${name}`;
+  let start = -1;
+  let end = -1;
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    const lineEnd = Math.min(offset + line.length + 1, text.length);
+    const key = tableHeaderKey(line);
+    if (start < 0) {
+      if (key === owned) {
+        start = offset;
+        end = lineEnd;
+      }
+    } else if (key !== null && key !== owned && !(withSubtables && key.startsWith(`${owned}.`))) {
+      break;
+    } else {
+      const bare = line.replace(/\r$/, "").trim();
+      if (bare.length > 0 && !bare.startsWith("#")) end = lineEnd;
+    }
+    offset += line.length + 1;
+  }
+  if (start < 0) return null;
+  return { start, end };
 }
 
 function upsertCodexMcpServer(text: string, name: string, command: string, args: string[]): string {
@@ -102,14 +138,16 @@ function upsertCodexMcpServer(text: string, name: string, command: string, args:
     const sep = base.length > 0 && !base.endsWith("\n\n") ? "\n" : "";
     return `${base}${sep}${block}`;
   }
-  return `${text.slice(0, existing.start)}${block}${text.slice(existing.end).replace(/^\n+/, "\n")}`;
+  return `${text.slice(0, existing.start)}${block}${text.slice(existing.end).replace(/^(?:\r?\n)+/, "\n")}`;
 }
 
 function removeCodexMcpServer(text: string, name: string): string {
-  const existing = findMcpServerBlock(text, name);
+  const existing = findMcpServerBlock(text, name, true);
   if (!existing) return text;
-  const before = text.slice(0, existing.start).replace(/\n+$/, "\n");
-  const after = text.slice(existing.end).replace(/^\n+/, "");
+  const before = text
+    .slice(0, existing.start)
+    .replace(/(?:\r?\n)+$/, (m) => (m.startsWith("\r") ? "\r\n" : "\n"));
+  const after = text.slice(existing.end).replace(/^(?:\r?\n)+/, "");
   if (before.length === 0) return after;
   if (after.length === 0) return before;
   return `${before}\n${after}`;
@@ -124,10 +162,6 @@ function tomlString(s: string): string {
   // TOML basic string: escape backslashes and quotes; preserve other UTF-8 bytes.
   const escaped = s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
   return `"${escaped}"`;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Exposed for tests.
