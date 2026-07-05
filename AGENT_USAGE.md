@@ -191,7 +191,9 @@ You should see exactly 8 tools listed.
 If multiple agents in the same repo will hit graphCTX at the same time
 (Claude Desktop + Cursor + a CI worker), start one daemon and point all of
 them at the same Unix socket. There is no TCP listener; the path is
-filesystem-local only.
+filesystem-local only. On Windows the same flag works: the path is mapped
+into the named-pipe namespace (`\\.\pipe\...`) automatically, since Node
+has no Unix-socket support there.
 
 ```bash
 # start once per machine / repo

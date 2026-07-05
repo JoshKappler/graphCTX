@@ -4,11 +4,13 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { McpServer } from "../../src/mcp/server.js";
+import { McpServer, resolveSocketPath } from "../../src/mcp/server.js";
 
-// Daemon mode: line-delimited JSON-RPC over a local Unix socket. Verifies the
-// listener binds locally (no TCP), advertises the same 8 tools, and handles two
-// concurrent clients against the same backing process.
+// Daemon mode: line-delimited JSON-RPC over a local Unix socket (a named pipe
+// on win32 — pipes have no filesystem entry, so readiness is probed by
+// connecting, not by existsSync). Verifies the listener binds locally (no
+// TCP), advertises the same 8 tools, and handles two concurrent clients
+// against the same backing process.
 
 describe("mcp daemon socket", () => {
   let workDir: string;
@@ -57,11 +59,12 @@ describe("mcp daemon socket", () => {
       })
       .finally(() => serveDone?.());
 
-    // wait for the socket to appear
-    for (let i = 0; i < 50 && !existsSync(socket); i++) {
+    // wait for the listener to accept connections
+    for (let i = 0; i < 50 && !(await canConnect(socket)); i++) {
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(existsSync(socket)).toBe(true);
+    expect(await canConnect(socket)).toBe(true);
+    if (process.platform !== "win32") expect(existsSync(socket)).toBe(true);
 
     const reply = await rpc(socket, [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
@@ -82,12 +85,23 @@ describe("mcp daemon socket", () => {
   }, 15000);
 });
 
+async function canConnect(socketPath: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const conn = createConnection(resolveSocketPath(socketPath));
+    conn.once("connect", () => {
+      conn.end();
+      resolve(true);
+    });
+    conn.once("error", () => resolve(false));
+  });
+}
+
 async function rpc(
   socketPath: string,
   requests: Array<Record<string, unknown>>,
 ): Promise<Array<{ id?: number; result?: { tools?: unknown[]; serverInfo?: { name?: string } } }>> {
   return await new Promise((resolve, reject) => {
-    const conn = createConnection(socketPath);
+    const conn = createConnection(resolveSocketPath(socketPath));
     let buf = "";
     const out: Array<{ id?: number; result?: unknown }> = [];
     const wantedIds = new Set(requests.map((r) => r.id as number | undefined).filter(Boolean));
