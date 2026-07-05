@@ -45,9 +45,13 @@ describe("user-global paths derive from os.homedir(), not $HOME", () => {
     expect(p).toBe(join(homedir(), ".codex", "skills", "graphctx", "SKILL.md"));
   });
 
-  it.runIf(process.platform === "win32")(
-    "global claude hook install lands in the user profile when HOME is unset",
-    () => {
+  // Runtime skip (not runIf): a collection-time exclusion makes `vitest list`
+  // platform-dependent, so no single docs test counter can match the live
+  // count on both CI platforms. The USERPROFILE redirect only exists on
+  // Windows, so the body still must not run elsewhere.
+  it("global claude hook install lands in the user profile when HOME is unset", (ctx) => {
+    if (process.platform !== "win32") return ctx.skip();
+    {
       const fakeProfile = mkdtempSync(join(tmpdir(), "gctx-profile-"));
       try {
         // biome-ignore lint/performance/noDelete: assigning undefined stores the string "undefined" in process.env
@@ -66,6 +70,6 @@ describe("user-global paths derive from os.homedir(), not $HOME", () => {
       } finally {
         rmSync(fakeProfile, { recursive: true, force: true });
       }
-    },
-  );
+    }
+  });
 });
