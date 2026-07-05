@@ -1,5 +1,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { buildRider } from "../adapters/channel.js";
 import type { Capsule } from "../core/types.js";
@@ -138,13 +139,18 @@ export class McpServer {
   }
 
   // Daemon mode: serve line-delimited JSON-RPC over a local Unix domain
-  // socket. Each connecting client is a fresh JSON-RPC session that shares
+  // socket (a named pipe on win32, where Node's net has no AF_UNIX support).
+  // Each connecting client is a fresh JSON-RPC session that shares
   // the same Runtime/DB with all the others, so Claude Desktop, Cursor, Codex
   // and a CI agent can all attach to one process without spawning a new
   // server per client. Bind path is local-filesystem only — there is no TCP
   // listener and there is no network exposure.
   async serveSocket(socketPath: string): Promise<void> {
-    if (existsSync(socketPath)) {
+    const listenPath = resolveSocketPath(socketPath);
+    // Named pipes have no filesystem entry: nothing stale to unlink, and the
+    // pipe disappears with its listener.
+    const isNamedPipe = process.platform === "win32";
+    if (!isNamedPipe && existsSync(socketPath)) {
       try {
         unlinkSync(socketPath);
       } catch {
@@ -186,12 +192,12 @@ export class McpServer {
     });
     await new Promise<void>((ok, reject) => {
       server.once("error", reject);
-      server.listen(socketPath, () => {
+      server.listen(listenPath, () => {
         server.off("error", reject);
         ok();
       });
     });
-    process.stderr.write(`graphctx mcp daemon listening on ${socketPath}\n`);
+    process.stderr.write(`graphctx mcp daemon listening on ${listenPath}\n`);
     await new Promise<void>((resolve) => {
       const stop = () => {
         try {
@@ -200,7 +206,7 @@ export class McpServer {
           resolve();
         }
         try {
-          if (existsSync(socketPath)) unlinkSync(socketPath);
+          if (!isNamedPipe && existsSync(socketPath)) unlinkSync(socketPath);
         } catch {
           /* noop */
         }
@@ -221,6 +227,19 @@ export class McpServer {
   private err(id: JsonRpcRequest["id"], code: number, message: string) {
     return { jsonrpc: "2.0", id: id ?? null, error: { code, message: redactSecrets(message) } };
   }
+}
+
+// Maps a filesystem-style socket path into the win32 named-pipe namespace
+// (\\.\pipe\...): Node's net has no AF_UNIX support on Windows, and listening
+// on a plain file path fails with EACCES. POSIX paths and already-namespaced
+// pipe paths pass through unchanged. Clients must connect to the same mapped
+// path, so this is exported for the CLI, tests, and any embedding caller.
+export function resolveSocketPath(socketPath: string): string {
+  if (process.platform !== "win32") return socketPath;
+  if (socketPath.startsWith("\\\\.\\pipe\\") || socketPath.startsWith("\\\\?\\pipe\\")) {
+    return socketPath;
+  }
+  return join("\\\\.\\pipe", socketPath);
 }
 
 function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {

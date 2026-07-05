@@ -18,6 +18,7 @@ import { defaultConfig } from "../../config/defaults.js";
 import { McpServer } from "../../mcp/server.js";
 import { MCP_TOOLS } from "../../mcp/tools.js";
 import { EXPECTED_COMMANDS, commandsFromHelp } from "../command-surface.js";
+import { tsxEntry, vitestEntry } from "../dev-tools.js";
 import { EVAL_GATE_SUITES } from "../registry.js";
 import { runAdaptersMcpEval } from "./adapters-mcp.js";
 
@@ -80,18 +81,8 @@ const EXPECTED_MCP_TOOLS = [
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
-const vitestBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "vitest.cmd" : "vitest",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
+const vitestEntryPath = vitestEntry(repoRoot);
 const fixtureRepo = join(repoRoot, "fixtures", "repo-pnpm-web");
 
 const GIT_ENV: NodeJS.ProcessEnv = {
@@ -305,7 +296,7 @@ export function formatCliDocsDemoReport(r: CliDocsDemoReport): string {
 
 function cli(args: string[], input?: string, env: NodeJS.ProcessEnv = process.env): CliResult {
   try {
-    const stdout = execFileSync(tsxBin, [cliPath, ...args], {
+    const stdout = execFileSync(process.execPath, [tsxEntryPath, cliPath, ...args], {
       cwd: repoRoot,
       env: { ...env, GRAPHCTX_USER_ID: "cli-docs-demo-eval" },
       input,
@@ -397,7 +388,7 @@ function mcpCheckPairs(markdown: string): Array<[number, number]> {
 }
 
 function vitestListCount(): number {
-  const stdout = execFileSync(vitestBin, ["list"], {
+  const stdout = execFileSync(process.execPath, [vitestEntryPath, "list"], {
     cwd: repoRoot,
     env: { ...process.env, GRAPHCTX_USER_ID: "cli-docs-demo-eval" },
     encoding: "utf8",

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { handleHook } from "../../src/adapters/claude-code/hooks.js";
+import { tsxEntry } from "../../src/eval/dev-tools.js";
 import { Runtime } from "../../src/runtime.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,13 +26,17 @@ afterEach(() => {
 // I9: a broken graphCTX must degrade to no memory, never a broken agent.
 function runHook(event: string, payload: object): { status: number; stdout: string } {
   try {
-    const stdout = execFileSync("npx", ["tsx", cliPath, "hook", event, "-C", dir], {
-      input: JSON.stringify(payload),
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "ignore"],
-      timeout: 30000,
-    });
+    const stdout = execFileSync(
+      process.execPath,
+      [tsxEntry(repoRoot), cliPath, "hook", event, "-C", dir],
+      {
+        input: JSON.stringify(payload),
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: 30000,
+      },
+    );
     return { status: 0, stdout };
   } catch (e) {
     const err = e as { status?: number; stdout?: string };

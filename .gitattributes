@@ -1,0 +1,7 @@
+# Checkout must stay LF everywhere: biome's format gate and the docs-as-code
+# evals compare exact bytes, and the default autocrlf=true on Windows would
+# turn every file CRLF and fail them.
+* text=auto eol=lf
+*.so binary
+*.dylib binary
+*.dll binary

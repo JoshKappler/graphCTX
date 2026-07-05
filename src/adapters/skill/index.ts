@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { ValidationError } from "../../core/errors.js";
 import { assertWritableConfigPath } from "../config-path.js";
@@ -31,11 +32,7 @@ export function isSkillClient(value: string): value is SkillClient {
   return (SKILL_CLIENTS as readonly string[]).includes(value);
 }
 
-export function skillPath(
-  client: SkillClient,
-  workspaceDir: string,
-  homeDir = process.env.HOME ?? "",
-): string {
+export function skillPath(client: SkillClient, workspaceDir: string, homeDir = homedir()): string {
   switch (client) {
     case "claude":
       return join(workspaceDir, ".claude", "skills", "graphctx", "SKILL.md");

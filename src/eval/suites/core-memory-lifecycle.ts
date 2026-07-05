@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tsxEntry } from "../dev-tools.js";
 
 // Core-memory lifecycle gate. This suite intentionally drives the REAL CLI
 // entry point over throwaway repos: remember -> recall -> why, plus the open
@@ -27,12 +28,7 @@ interface CliResult {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
 
 const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
@@ -46,7 +42,7 @@ const GIT_ENV: NodeJS.ProcessEnv = {
 
 function cli(args: string[], input?: string): CliResult {
   try {
-    const stdout = execFileSync(tsxBin, [cliPath, ...args], {
+    const stdout = execFileSync(process.execPath, [tsxEntryPath, cliPath, ...args], {
       cwd: repoRoot,
       env: { ...process.env, GRAPHCTX_USER_ID: "core-memory-eval" },
       input,

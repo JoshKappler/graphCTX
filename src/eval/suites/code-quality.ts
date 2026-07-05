@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXPECTED_COMMANDS, EXPECTED_COMMAND_SET, commandsFromHelp } from "../command-surface.js";
+import { biomeEntry, tsxEntry } from "../dev-tools.js";
 import { EVAL_GATE_SUITES, type EvalGateSuite } from "../registry.js";
 
 // Final code-quality gate. This keeps the cheap deterministic checks close to
@@ -74,18 +75,8 @@ const EXPECTED_EVAL_TESTS: Record<EvalGateSuite, string> = {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
-const biomeBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "biome.cmd" : "biome",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
+const biomeEntryPath = biomeEntry(repoRoot);
 
 export function runCodeQualityEval(): CodeQualityReport {
   const detail: string[] = [];
@@ -96,7 +87,7 @@ export function runCodeQualityEval(): CodeQualityReport {
     detail.push(`${ok ? "✓" : "✗"} ${name}${note ? ` — ${note}` : ""}`);
   };
 
-  const fullBiome = command(biomeBin, ["check", "."]);
+  const fullBiome = command(process.execPath, [biomeEntryPath, "check", "."]);
   check(
     "full-repo Biome check has zero lint/format debt",
     fullBiome.status === 0,
@@ -129,7 +120,7 @@ export function runCodeQualityEval(): CodeQualityReport {
       .join(",")}`,
   );
 
-  const help = command(tsxBin, [cliPath, "--help"]);
+  const help = command(process.execPath, [tsxEntryPath, cliPath, "--help"]);
   const helpCommands = commandsFromHelp(help.stdout);
   const statusRow = tableRow(readRepo("docs/STATUS.md"), "cli.ts");
   const readme = readRepo("README.md");

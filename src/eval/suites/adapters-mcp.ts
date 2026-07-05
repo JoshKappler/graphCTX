@@ -24,16 +24,12 @@ import { McpServer } from "../../mcp/server.js";
 import { MCP_TOOLS } from "../../mcp/tools.js";
 import type { Runtime } from "../../runtime.js";
 import { classifyOutcome } from "../../telemetry/outcomes.js";
+import { tsxEntry } from "../dev-tools.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const cliPath = join(repoRoot, "src", "cli.ts");
-const tsxBin = join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+const tsxEntryPath = tsxEntry(repoRoot);
 
 const EXPECTED_MCP_TOOL_NAMES = [
   "remember",
@@ -1160,19 +1156,23 @@ function runServeMcpStdio(workspaceDir: string): {
 } {
   try {
     execFileSync("git", ["-C", workspaceDir, "init", "-q"], { stdio: "ignore" });
-    const stdout = execFileSync(tsxBin, [cliPath, "serve", "--mcp", "-C", workspaceDir], {
-      cwd: repoRoot,
-      env: { ...process.env, GRAPHCTX_USER_ID: "mcp-stdio-eval" },
-      input: [
-        "{bad json",
-        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
-        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
-        "",
-      ].join("\n"),
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 20000,
-    });
+    const stdout = execFileSync(
+      process.execPath,
+      [tsxEntryPath, cliPath, "serve", "--mcp", "-C", workspaceDir],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, GRAPHCTX_USER_ID: "mcp-stdio-eval" },
+        input: [
+          "{bad json",
+          JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+          JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+          "",
+        ].join("\n"),
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 20000,
+      },
+    );
     const responses = stdout
       .trim()
       .split(/\n+/)
