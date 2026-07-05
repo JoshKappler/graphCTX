@@ -245,6 +245,19 @@ function conflictCandidates(rt: Runtime, sessionId?: string): ScoredFact[] {
       .filter((fact) => !fact.scope.session_id),
   );
   if (sessionId) add(rt.facts.activeAsOf(rt.scope(sessionId)));
+  // Disputed facts are exactly what this tool exists to settle: the write path
+  // marks equal-precedence contradictions disputed (SPEC §14), so the resolver
+  // must see them even though the active-status queries above filter them out.
+  // Same scope layering: user-global, current workspace, current session.
+  add(
+    rt.facts
+      .disputed({ user_id: rt.userId })
+      .filter(
+        (fact) =>
+          (!fact.scope.workspace_id || fact.scope.workspace_id === rt.workspaceId) &&
+          (!fact.scope.session_id || fact.scope.session_id === sessionId),
+      ),
+  );
   return [...byId.values()].map((fact) => ({ fact, score: 1 }));
 }
 

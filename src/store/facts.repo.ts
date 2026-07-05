@@ -516,6 +516,16 @@ export class FactsRepo {
     return this.hydrateMany(rows);
   }
 
+  // Disputed facts in scope — the conflict-resolution surface. Active-status
+  // queries exclude these by design, so resolvers need a dedicated view.
+  disputed(scope: ScopeFilter): Fact[] {
+    const { clause, params } = scopeClause(scope);
+    const rows = this.db
+      .prepare(`SELECT * FROM facts WHERE status = 'disputed' ${clause}`)
+      .all(...params) as FactRow[];
+    return this.hydrateMany(rows);
+  }
+
   all(scope: ScopeFilter): Fact[] {
     const { clause, params } = scopeClause(scope);
     const rows = this.db
