@@ -621,6 +621,19 @@ describe("deterministic extractors", () => {
     expect(String(g!.subject)).toContain("g.ts");
   });
 
+  it("generated-markers emits forward-slash paths on every platform", () => {
+    mkdirSync(join(dir, "src", "gen"), { recursive: true });
+    writeFileSync(
+      join(dir, "src", "gen", "deep.ts"),
+      "// @generated DO NOT EDIT\nexport const x = 1;\n",
+    );
+    const { res } = extract();
+    const g = res.inserted.find((f) => f.predicate === "do_not_edit");
+    expect(g).toBeDefined();
+    expect(String(g!.subject)).toBe("src/gen/deep.ts");
+    expect(String(g!.subject)).not.toContain("\\");
+  });
+
   it("generated-markers does not follow symlinked directories outside the workspace", () => {
     const outside = mkdtempSync(join(tmpdir(), "gctx-ex-outside-"));
     try {
